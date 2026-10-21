@@ -1,0 +1,135 @@
+@page "/"
+@rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
+@inject HttpClient Http
+
+<PageTitle>Stock Drawdown</PageTitle>
+
+<h3>Stock Drawdown Analysis</h3>
+<p>Source: C:\data\*.csv (30m candles, close price used)</p>
+
+@if (_summaries is null)
+{
+    <p>Loading...</p>
+}
+else if (_summaries.Count == 0)
+{
+    <p>No CSV files found in C:\data.</p>
+}
+else
+{
+    <table class="grid">
+        <thead>
+            <tr>
+                <th>Symbol</th>
+                <th>From</th>
+                <th>To</th>
+                <th>Last close</th>
+                <th>Peak close</th>
+                <th>Peak date</th>
+                <th>Now % down from peak</th>
+                <th>Max drawdown %</th>
+                <th>Max drawdown period</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var s in _summaries)
+            {
+                <tr class="@(s.Symbol == _selected ? "sel" : "")" @onclick="() => SelectAsync(s.Symbol)">
+                    <td>@s.Symbol</td>
+                    <td>@D(s.From)</td>
+                    <td>@D(s.To)</td>
+                    <td>@s.LastClose.ToString("0.00")</td>
+                    <td>@s.PeakClose.ToString("0.00")</td>
+                    <td>@D(s.PeakDate)</td>
+                    <td>@s.DownFromPeakPct.ToString("0.00")%</td>
+                    <td>@s.MaxDrawdownPct.ToString("0.00")%</td>
+                    <td>@D(s.MaxDrawdownPeakDate) → @D(s.MaxDrawdownTroughDate)</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@if (_detail is not null)
+{
+    var d = _detail.Summary;
+    <h4>@d.Symbol — price chart</h4>
+    <svg class="chart" viewBox="0 0 900 300" preserveAspectRatio="none">
+        <line x1="0" y1="@_peakY" x2="900" y2="@_peakY" stroke="green" stroke-dasharray="6" />
+        <polyline fill="none" stroke="steelblue" stroke-width="1.5" points="@_points" />
+    </svg>
+    <p>Green dashed line = peak close (@d.PeakClose.ToString("0.00")) on @D(d.PeakDate)</p>
+
+    <div class="two-col">
+        <div>
+            <h4>Price fall levels from peak close</h4>
+            <table class="grid">
+                <thead>
+                    <tr><th>Fall %</th><th>Price after fall</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var level in Levels)
+                    {
+                        <tr>
+                            <td>@level.ToString("0.0")%</td>
+                            <td>@((d.PeakClose * (1 - level / 100)).ToString("0.00"))</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div>
+            <h4>Price calculator</h4>
+            <label>Enter a price: <input type="number" step="0.05" @bind="_price" /></label>
+            @if (_price > 0)
+            {
+                <p>% change from peak close: <b>@Pct(d.PeakClose, _price)</b></p>
+                <p>% change from last close: <b>@Pct(d.LastClose, _price)</b></p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<StockSummary>? _summaries;
+    private StockDetail? _detail;
+    private string? _selected;
+    private decimal _price;
+    private string _points = "";
+    private double _peakY;
+
+    private static readonly decimal[] Levels = [1, 2, 3, 5, 7.5m, 10, 15, 20, 25, 30, 40, 50];
+
+    protected override async Task OnInitializedAsync() =>
+        _summaries = await Http.GetFromJsonAsync<List<StockSummary>>("api/stocks");
+
+    private async Task SelectAsync(string symbol)
+    {
+        _selected = symbol;
+        _detail = await Http.GetFromJsonAsync<StockDetail>($"api/stocks/{Uri.EscapeDataString(symbol)}");
+        _price = _detail?.Summary.LastClose ?? 0;
+        BuildChart();
+    }
+
+    private void BuildChart()
+    {
+        if (_detail is null) return;
+
+        var c = _detail.Candles;
+        var min = (double)c.Min(x => x.Close);
+        var max = (double)c.Max(x => x.Close);
+        var range = Math.Max(max - min, 1e-9);
+        double ToY(double v) => 295 - (v - min) / range * 290;
+
+        _points = string.Join(" ", c.Select((x, i) =>
+            $"{i * 900.0 / Math.Max(c.Count - 1, 1):F1},{ToY((double)x.Close):F1}"));
+        _peakY = ToY((double)_detail.Summary.PeakClose);
+    }
+
+    private static string D(DateTime d) => d.ToString("dd-MMM-yy HH:mm");
+
+    // Signed % change from a reference price to the target price.
+    private static string Pct(decimal reference, decimal target) =>
+        ((target - reference) / reference * 100).ToString("+0.00;-0.00;0.00") + "%";
+}
