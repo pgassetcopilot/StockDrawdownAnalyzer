@@ -12,6 +12,10 @@ public record StockSummary(
     double LastClose,
     DateTime LastTime,
     double CurrentDownPct,
-    double MaxDrawdownPct);
+    double MaxDrawdownPct,
+    double BottomClose,
+    DateTime BottomTime,
+    double UpFromBottomPct,
+    double MaxUpFromBottomPct);
 
-public record FallLevel(int Percent, double Price);
+public record FallLevel(int Percent, double Price, double UpPrice);

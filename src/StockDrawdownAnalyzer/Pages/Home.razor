@@ -20,27 +20,35 @@
 
 @if (rows.Count > 0)
 {
-    <table class="table table-sm table-hover mt-3">
-        <thead>
+    <table class="table table-sm table-striped table-hover mt-3">
+        <thead class="table-primary">
             <tr>
                 <th>Stock</th>
+                <th>Last close</th>
                 <th>Peak close</th>
                 <th>Peak time (UTC)</th>
-                <th>Last close</th>
                 <th>Down from peak now</th>
                 <th>Max drawdown</th>
+                <th>Bottom close</th>
+                <th>Bottom date (UTC)</th>
+                <th>Up from bottom now</th>
+                <th>Max Run-up</th>
             </tr>
         </thead>
         <tbody>
             @foreach (var r in rows)
             {
                 <tr class="@(r.Symbol == selected ? "table-active" : "")" style="cursor:pointer" @onclick="() => Select(r.Symbol)">
-                    <td>@r.Symbol</td>
+                    <td class="fw-bold">@r.Symbol</td>
+                    <td>@r.LastClose.ToString("0.00", CultureInfo.InvariantCulture)</td>
                     <td>@r.PeakClose.ToString("0.00", CultureInfo.InvariantCulture)</td>
                     <td>@r.PeakTime.ToString("yyyy-MM-dd HH:mm")</td>
-                    <td>@r.LastClose.ToString("0.00", CultureInfo.InvariantCulture)</td>
-                    <td>@r.CurrentDownPct.ToString("0.00", CultureInfo.InvariantCulture)%</td>
-                    <td>@r.MaxDrawdownPct.ToString("0.00", CultureInfo.InvariantCulture)%</td>
+                    <td class="text-danger">@r.CurrentDownPct.ToString("0.00", CultureInfo.InvariantCulture)%</td>
+                    <td class="text-danger">@r.MaxDrawdownPct.ToString("0.00", CultureInfo.InvariantCulture)%</td>
+                    <td>@r.BottomClose.ToString("0.00", CultureInfo.InvariantCulture)</td>
+                    <td>@r.BottomTime.ToString("yyyy-MM-dd HH:mm")</td>
+                    <td class="text-success">@r.UpFromBottomPct.ToString("0.00", CultureInfo.InvariantCulture)%</td>
+                    <td class="text-success">@r.MaxUpFromBottomPct.ToString("0.00", CultureInfo.InvariantCulture)%</td>
                 </tr>
             }
         </tbody>
@@ -51,25 +59,42 @@
 {
     var candles = data[selectedSummary.Symbol];
     var peak = selectedSummary.PeakClose;
+    var levels = StockData.FallLevels(peak, selectedSummary.BottomClose);
 
     <h4 class="mt-4">@selectedSummary.Symbol</h4>
-    <svg viewBox="0 0 800 300" width="100%" style="background:#fff;border:1px solid #ddd">
-        <polyline fill="none" stroke="#0d6efd" stroke-width="2" points="@ChartPoints(candles)" />
-    </svg>
+
+    <h5 class="mt-4">Fall/Up levels from peak</h5>
+    <div class="table-responsive">
+        <table class="table table-sm table-bordered table-striped w-auto">
+            <thead class="table-primary">
+                <tr>
+                    <th>Percentage</th>
+                    @foreach (var f in levels)
+                    {
+                        <th>@f.Percent%</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <th class="text-danger">Fall price</th>
+                    @foreach (var f in levels)
+                    {
+                        <td class="text-danger">@f.Price.ToString("0.00", CultureInfo.InvariantCulture)</td>
+                    }
+                </tr>
+                <tr>
+                    <th class="text-success">Up price (from bottom)</th>
+                    @foreach (var f in levels)
+                    {
+                        <td class="text-success">@f.UpPrice.ToString("0.00", CultureInfo.InvariantCulture)</td>
+                    }
+                </tr>
+            </tbody>
+        </table>
+    </div>
 
     <div class="row mt-4">
-        <div class="col-md-6">
-            <h5>Fall levels from peak (@peak.ToString("0.00", CultureInfo.InvariantCulture))</h5>
-            <table class="table table-sm">
-                <thead><tr><th>Fall</th><th>Price</th></tr></thead>
-                <tbody>
-                    @foreach (var f in StockData.FallLevels(peak))
-                    {
-                        <tr><td>@f.Percent%</td><td>@f.Price.ToString("0.00", CultureInfo.InvariantCulture)</td></tr>
-                    }
-                </tbody>
-            </table>
-        </div>
         <div class="col-md-6">
             <h5>Price calculator</h5>
             <label class="form-label">Enter a price for @selectedSummary.Symbol</label>
@@ -82,6 +107,11 @@
             <p class="text-muted small">Positive = price is below that level. Negative = price is above it.</p>
         </div>
     </div>
+
+    <h5 class="mt-4">Price chart</h5>
+    <svg viewBox="0 0 800 300" width="100%" style="background:#fff;border:1px solid #ddd">
+        <polyline fill="none" stroke="#0d6efd" stroke-width="2" points="@ChartPoints(candles)" />
+    </svg>
 }
 
 @code {

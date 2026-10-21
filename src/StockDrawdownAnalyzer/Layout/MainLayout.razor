@@ -1,11 +1,14 @@
 ﻿@inherits LayoutComponentBase
-<div class="page">
+<div class="page @(sidebarOpen ? "" : "sidebar-hidden")">
     <div class="sidebar">
         <NavMenu />
     </div>
 
     <main>
-        <div class="top-row px-4">
+        <div class="top-row px-4 d-flex align-items-center gap-3">
+            <button class="btn btn-outline-secondary btn-sm" @onclick="() => sidebarOpen = !sidebarOpen">
+                ☰ Menu
+            </button>
             <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
         </div>
 
@@ -14,3 +17,7 @@
         </article>
     </main>
 </div>
+
+@code {
+    private bool sidebarOpen;
+}
