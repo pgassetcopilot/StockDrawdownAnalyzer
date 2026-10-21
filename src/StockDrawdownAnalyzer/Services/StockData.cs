@@ -1,77 +1,56 @@
 using System.Globalization;
-using StockDrawdownAnalyzer.Client;
 
 namespace StockDrawdownAnalyzer.Services;
 
-public class StockData(IConfiguration config)
+public static class StockData
 {
-    private readonly string _folder = config["DataFolder"] ?? @"C:\data";
-
-    public List<StockSummary> GetSummaries() =>
-        Load().Select(x => Summarize(x.Name, x.Candles)).ToList();
-
-    public StockDetail? GetDetail(string symbol)
+    // Expects a header with "time" (Unix seconds) and "close" columns.
+    public static List<Candle> ParseCsv(string text)
     {
-        var item = Load().FirstOrDefault(x => x.Name.Equals(symbol, StringComparison.OrdinalIgnoreCase));
-        return item.Name is null ? null : new StockDetail(Summarize(item.Name, item.Candles), item.Candles);
+        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lines.Length < 2) return [];
+
+        var header = lines[0].Split(',').Select(h => h.Trim().ToLowerInvariant()).ToArray();
+        int timeIdx = Array.IndexOf(header, "time");
+        int closeIdx = Array.IndexOf(header, "close");
+        if (timeIdx < 0 || closeIdx < 0) return [];
+
+        var candles = new List<Candle>();
+        foreach (var line in lines.Skip(1))
+        {
+            var parts = line.Split(',');
+            if (parts.Length <= Math.Max(timeIdx, closeIdx)) continue;
+            if (!long.TryParse(parts[timeIdx], NumberStyles.Integer, CultureInfo.InvariantCulture, out var unix)) continue;
+            if (!double.TryParse(parts[closeIdx], NumberStyles.Float, CultureInfo.InvariantCulture, out var close)) continue;
+            candles.Add(new Candle(DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime, close));
+        }
+
+        return candles.OrderBy(c => c.Time).ToList();
     }
 
-    // Reads every CSV on each call so new/updated files are picked up without restarting.
-    private List<(string Name, List<Candle> Candles)> Load()
+    public static StockSummary Summarize(string symbol, List<Candle> candles)
     {
-        if (!Directory.Exists(_folder)) return [];
-
-        return Directory.GetFiles(_folder, "*.csv")
-            .OrderBy(f => f)
-            .Select(f => (Name: Path.GetFileNameWithoutExtension(f), Candles: ReadCsv(f)))
-            .Where(x => x.Candles.Count > 0)
-            .ToList();
-    }
-
-    // Expected columns: time (unix seconds), open, high, low, close, Volume
-    private static List<Candle> ReadCsv(string path) =>
-        File.ReadLines(path)
-            .Skip(1)
-            .Where(l => l.Trim().Length > 0)
-            .Select(l => l.Split(','))
-            .Select(p => new Candle(
-                DateTimeOffset.FromUnixTimeSeconds(long.Parse(p[0], CultureInfo.InvariantCulture)).ToLocalTime().DateTime,
-                decimal.Parse(p[4], CultureInfo.InvariantCulture)))
-            .OrderBy(c => c.Time)
-            .ToList();
-
-    private static StockSummary Summarize(string name, List<Candle> candles)
-    {
+        // Peak = highest close in the whole data set; running peak is used for max drawdown.
+        var peak = candles.MaxBy(c => c.Close)!;
         var last = candles[^1];
-        var allTimePeak = candles.MaxBy(c => c.Close)!;
 
-        // Max drawdown: largest peak-to-trough fall, using a running peak.
-        var runningPeak = candles[0];
-        var ddPeak = candles[0];
-        var ddTrough = candles[0];
-        decimal maxDown = 0;
+        double runningPeak = candles[0].Close;
+        double maxDd = 0;
         foreach (var c in candles)
         {
-            if (c.Close > runningPeak.Close) runningPeak = c;
-            var down = (runningPeak.Close - c.Close) / runningPeak.Close * 100;
-            if (down > maxDown)
-            {
-                maxDown = down;
-                ddPeak = runningPeak;
-                ddTrough = c;
-            }
+            runningPeak = Math.Max(runningPeak, c.Close);
+            maxDd = Math.Max(maxDd, Drop(runningPeak, c.Close));
         }
 
         return new StockSummary(
-            name,
-            candles[0].Time,
-            last.Time,
-            last.Close,
-            allTimePeak.Close,
-            allTimePeak.Time,
-            Math.Round((allTimePeak.Close - last.Close) / allTimePeak.Close * 100, 2),
-            Math.Round(maxDown, 2),
-            ddPeak.Time,
-            ddTrough.Time);
+            symbol, candles.Count, peak.Close, peak.Time, last.Close, last.Time,
+            Drop(peak.Close, last.Close), maxDd);
     }
+
+    public static List<FallLevel> FallLevels(double peak) =>
+        Enumerable.Range(1, 50).Select(p => new FallLevel(p, peak * (1 - p / 100.0))).ToList();
+
+    // Percent fall from basePrice to price (positive = down, negative = up).
+    public static double Drop(double basePrice, double price) =>
+        basePrice <= 0 ? 0 : (basePrice - price) / basePrice * 100;
 }

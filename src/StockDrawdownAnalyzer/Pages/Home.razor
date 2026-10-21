@@ -1,0 +1,154 @@
+@page "/"
+@using System.Globalization
+@using Microsoft.JSInterop
+@using StockDrawdownAnalyzer.Services
+@inject IJSRuntime JS
+
+<PageTitle>Stock Drawdown Analyzer</PageTitle>
+
+<h3>Stock Drawdown Analyzer</h3>
+<p>Click the button and select your <code>C:\data</code> folder. Each <code>.csv</code> file is one stock (<code>time,open,high,low,close,Volume</code>). Works in Chrome or Edge on desktop.</p>
+
+<button class="btn btn-primary" @onclick="LoadFolder" disabled="@loading">
+    @(loading ? "Loading..." : "Choose C:\\data folder")
+</button>
+
+@if (error is not null)
+{
+    <div class="alert alert-danger mt-3">@error</div>
+}
+
+@if (rows.Count > 0)
+{
+    <table class="table table-sm table-hover mt-3">
+        <thead>
+            <tr>
+                <th>Stock</th>
+                <th>Peak close</th>
+                <th>Peak time (UTC)</th>
+                <th>Last close</th>
+                <th>Down from peak now</th>
+                <th>Max drawdown</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var r in rows)
+            {
+                <tr class="@(r.Symbol == selected ? "table-active" : "")" style="cursor:pointer" @onclick="() => Select(r.Symbol)">
+                    <td>@r.Symbol</td>
+                    <td>@r.PeakClose.ToString("0.00", CultureInfo.InvariantCulture)</td>
+                    <td>@r.PeakTime.ToString("yyyy-MM-dd HH:mm")</td>
+                    <td>@r.LastClose.ToString("0.00", CultureInfo.InvariantCulture)</td>
+                    <td>@r.CurrentDownPct.ToString("0.00", CultureInfo.InvariantCulture)%</td>
+                    <td>@r.MaxDrawdownPct.ToString("0.00", CultureInfo.InvariantCulture)%</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@if (selectedSummary is not null)
+{
+    var candles = data[selectedSummary.Symbol];
+    var peak = selectedSummary.PeakClose;
+
+    <h4 class="mt-4">@selectedSummary.Symbol</h4>
+    <svg viewBox="0 0 800 300" width="100%" style="background:#fff;border:1px solid #ddd">
+        <polyline fill="none" stroke="#0d6efd" stroke-width="2" points="@ChartPoints(candles)" />
+    </svg>
+
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <h5>Fall levels from peak (@peak.ToString("0.00", CultureInfo.InvariantCulture))</h5>
+            <table class="table table-sm">
+                <thead><tr><th>Fall</th><th>Price</th></tr></thead>
+                <tbody>
+                    @foreach (var f in StockData.FallLevels(peak))
+                    {
+                        <tr><td>@f.Percent%</td><td>@f.Price.ToString("0.00", CultureInfo.InvariantCulture)</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="col-md-6">
+            <h5>Price calculator</h5>
+            <label class="form-label">Enter a price for @selectedSummary.Symbol</label>
+            <input class="form-control" type="number" step="any" @bind="calcPrice" />
+            <p class="mt-3">
+                Fall from peak: <strong>@StockData.Drop(peak, calcPrice).ToString("0.00", CultureInfo.InvariantCulture)%</strong>
+                <br />
+                Fall from last close: <strong>@StockData.Drop(selectedSummary.LastClose, calcPrice).ToString("0.00", CultureInfo.InvariantCulture)%</strong>
+            </p>
+            <p class="text-muted small">Positive = price is below that level. Negative = price is above it.</p>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly Dictionary<string, List<Candle>> data = new();
+    private List<StockSummary> rows = new();
+    private string? selected;
+    private double calcPrice;
+    private bool loading;
+    private string? error;
+
+    private StockSummary? selectedSummary =>
+        selected is null ? null : rows.FirstOrDefault(r => r.Symbol == selected);
+
+    private async Task LoadFolder()
+    {
+        loading = true;
+        error = null;
+        try
+        {
+            await using var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/folder.js");
+            var files = await module.InvokeAsync<CsvFile[]>("pickFolderCsvs");
+
+            data.Clear();
+            var loaded = new List<StockSummary>();
+            foreach (var f in files)
+            {
+                var candles = StockData.ParseCsv(f.Text);
+                if (candles.Count == 0) continue;
+                data[f.Name] = candles;
+                loaded.Add(StockData.Summarize(f.Name, candles));
+            }
+
+            rows = loaded.OrderByDescending(r => r.CurrentDownPct).ToList();
+            selected = rows.FirstOrDefault()?.Symbol;
+            calcPrice = selectedSummary?.LastClose ?? 0;
+
+            if (rows.Count == 0)
+                error = "No valid CSV files (with time and close columns) found in the selected folder.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void Select(string symbol)
+    {
+        selected = symbol;
+        calcPrice = selectedSummary?.LastClose ?? 0;
+    }
+
+    private static string ChartPoints(List<Candle> candles)
+    {
+        double min = candles.Min(c => c.Close);
+        double max = candles.Max(c => c.Close);
+        double range = max - min == 0 ? 1 : max - min;
+        double xStep = candles.Count > 1 ? 800.0 / (candles.Count - 1) : 0;
+
+        return string.Join(" ", candles.Select((c, i) =>
+        {
+            double x = i * xStep;
+            double y = 290 - (c.Close - min) / range * 280 + 5;
+            return $"{x.ToString("0.#", CultureInfo.InvariantCulture)},{y.ToString("0.#", CultureInfo.InvariantCulture)}";
+        }));
+    }
+}

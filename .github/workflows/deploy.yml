@@ -1,0 +1,44 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish
+        run: dotnet publish src/StockDrawdownAnalyzer/StockDrawdownAnalyzer.csproj -c Release -o publish
+
+      - name: Prepare static files for the project site path
+        run: |
+          cd publish/wwwroot
+          sed -i 's|<base href="/" />|<base href="/${{ github.event.repository.name }}/" />|' index.html
+          touch .nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish/wwwroot
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
